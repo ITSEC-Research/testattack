@@ -73,15 +73,23 @@ test3() {
     "http://${TARGET}/hotmail.php" > /dev/null 2>&1
 }
 
-# The signature counts SYNs to port 22 by source, 5 within 120 seconds, so a
-# handful of connection attempts is enough -- this does not need to be a real
-# nmap run. The wider sweep afterwards is what Zeek's scan detection counts.
+# Two halves, and they deliberately go to different hosts.
+#
+# The signature is scoped $HOME_NET -> $EXTERNAL_NET 22, so the SSH probes have
+# to leave the network to match -- pointing them at a host on your own LAN
+# fires nothing, because then the destination is HOME_NET too. It counts SYNs
+# by source, 5 within 120 seconds, so six attempts is enough; this does not
+# need to be a real nmap run.
+#
+# Zeek's scan detection has no such direction constraint but wants breadth, so
+# the wide sweep goes at the LAN host instead of hammering a stranger's box
+# with 300 connections.
 test4() {
-  need_lan_target || return 0
   for _ in 1 2 3 4 5 6; do
-    nc -z -w 1 "$LAN_TARGET" 22 > /dev/null 2>&1
+    nc -z -w 1 "$TARGET" 22 > /dev/null 2>&1
   done
-  echo "  sweeping 300 ports on ${LAN_TARGET} for Zeek scan detection ..."
+  need_lan_target || return 0
+  echo "      sweeping 300 ports on ${LAN_TARGET} for Zeek scan detection ..."
   for p in $(seq 1 300); do
     nc -z -w 1 "$LAN_TARGET" "$p" > /dev/null 2>&1 &
   done
