@@ -34,6 +34,47 @@ malware, no payloads, no persistence left behind.
 - Run elevated (**Run as administrator**) to include the admin-only tests;
   without elevation they are skipped, not failed.
 
+## Quick start (one-liner)
+
+Download straight from GitHub and run. Drop the trailing `-99` to get the
+interactive menu instead of running every test.
+
+**NIDS — Linux**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOrion.sh -o /tmp/tmOrion.sh && bash /tmp/tmOrion.sh -99
+```
+
+**NIDS — Windows (PowerShell)**
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOrion.ps1 -OutFile $env:TEMP\tmOrion.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\tmOrion.ps1 -99
+```
+
+**HIDS — Windows (elevated PowerShell)**
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmHids.ps1 -OutFile $env:TEMP\tmHids.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\tmHids.ps1 -99
+```
+
+The `SecurityProtocol ... -bor 3072` prefix forces TLS 1.2 on top of whatever
+is already enabled. GitHub only accepts TLS 1.2+, but Windows PowerShell 5.1 on
+older builds (Windows 10 before 1607-ish, Windows 7 / 8.1 / Server 2012 R2 with
+WMF 5.1) can default to TLS 1.0, and the download fails with "Could not create
+SSL/TLS secure channel". `3072` is the raw value of `Tls12`, used instead of the
+enum name because older .NET builds don't define it. On current Windows it's a
+no-op. Pre-Windows 10 hosts also need WMF 5.1 (the scripts require PowerShell
+5.1) and, for the NIDS HTTP tests, a `curl.exe` on `PATH` (built-in only from
+Windows 10 1803).
+
+Set `TMORION_TARGET` / `TMORION_LAN_TARGET` first (see Usage) if you want the
+NIDS LAN tests to run, e.g. `TMORION_LAN_TARGET=10.0.0.5 bash /tmp/tmOrion.sh -99`.
+
+Why download-then-run rather than `curl | bash` / `iex (irm ...)`: piping into
+bash steals stdin, so the interactive menu can't read your choice; and running
+the PowerShell scripts in-process via `iex` would make their `exit` close your
+own PowerShell window. Running the saved file in a child process avoids both.
+
 ## Usage
 
 Each script runs the same three ways: interactive menu, a single test, or all.
