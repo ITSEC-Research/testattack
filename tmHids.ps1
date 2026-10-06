@@ -163,6 +163,81 @@ $Tests = @(
      # wmic.exe is deprecated and may be absent on very recent Windows 11 builds.
      Run={ Start-Child 'wmic.exe' @('/namespace:\\root\SecurityCenter2','Path','AntiVirusProduct','Get','displayName') };
      Cleanup={} }
+
+  # ---- NATIVE section: no Sysmon required -----------------------------------
+  # These fire from built-in Windows logs the Wazuh agent already collects
+  # (Security, Microsoft-Windows-Windows Defender/Operational,
+  # Microsoft-Windows-PowerShell/Operational), so they still work on agents
+  # without Sysmon -- where tests 1-12 mostly go dark. Rule IDs below were
+  # confirmed firing on the lab Wazuh manager.
+
+  @{ Num=13; Admin=$true;  Native=$true; Tactic='Account Manipulation'; Rule='60109';
+     Name='Local admin account create + delete (Security 4720/4726)';
+     # 4720 (account created) -> rule 60109, and the group-add emits 4732; the
+     # delete in cleanup emits 4726 -> 60111. All from the Security channel.
+     Run={ Start-Child 'net.exe' @('user','tmHIDS_Native','TestP@ss123!','/add','/comment:tmHIDS-native')
+           Start-Child 'net.exe' @('localgroup','Administrators','tmHIDS_Native','/add') };
+     Cleanup={ Start-Child 'net.exe' @('localgroup','Administrators','tmHIDS_Native','/delete')
+               Start-Child 'net.exe' @('user','tmHIDS_Native','/delete') } }
+
+  @{ Num=14; Admin=$false; Native=$true; Tactic='Defense Evasion'; Rule='62123';
+     Name='EICAR AV test file -> Defender detection (Defender/Operational 1116)';
+     # The standard, harmless antivirus test string. Defender detects it on write
+     # (EID 1116 -> rule 62123) and quarantines it -- pure native telemetry, no
+     # Sysmon. The single-quoted string keeps $EICAR / $H literal. Defender
+     # usually removes the file itself; cleanup is a belt-and-suspenders.
+     Run={ $eicar = 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+           Set-Content -Path "$env:TEMP\tmhids_eicar.com" -Value $eicar -Force
+           Start-Sleep -Seconds 2 };
+     Cleanup={ Remove-Item "$env:TEMP\tmhids_eicar.com" -Force -ErrorAction SilentlyContinue } }
+
+  @{ Num=15; Admin=$false; Native=$true; Tactic='Execution'; Rule='91823';
+     Name='PowerShell Invoke-Command remote exec (PowerShell/Operational 4104)';
+     # Needs PowerShell Script Block Logging (the IntelliBron agent installer
+     # enables it). Logs a 4104 script block containing Invoke-Command
+     # -ComputerName -> rule 91823. WinRM may be off; the alert is about the
+     # script block text, not whether the remote call succeeds.
+     Run={ Invoke-Command -ComputerName localhost -ScriptBlock { Write-Output 'tmHIDS native 4104 test' } -ErrorAction SilentlyContinue };
+     Cleanup={} }
+
+  @{ Num=16; Admin=$false; Native=$true; Tactic='Credential Access'; Rule='60204';
+     Name='Brute force - multiple failed logons (Security 4625)';
+     # 15 bad network logons to loopback -> 15x 4625 (rule 60122) which the
+     # frequency rule 60204 (L10) aggregates. Works on a DEFAULT agent (Security
+     # channel, failed-logon auditing is on by default). The username does not
+     # exist, so nothing locks out; same ipAddress (127.0.0.1) groups them.
+     Run={ for ($i=1; $i -le 15; $i++) {
+             & cmd.exe /c ('net use \\127.0.0.1\IPC$ /user:tmHIDS_NoSuchUser WrongPass' + $i + ' >nul 2>&1') | Out-Null } };
+     Cleanup={ & cmd.exe /c 'net use * /delete /y >nul 2>&1' | Out-Null } }
+
+  # Sensitive LOCAL group changes (Security 4732, matched by group SID). Same
+  # mechanism as test 13 (Administrators). Each creates a throwaway user, adds it
+  # to the group, then cleanup removes it and deletes the user -- fully reverted.
+  @{ Num=17; Admin=$true;  Native=$true; Tactic='Account Manipulation'; Rule='60171';
+     Name='Guests group change (Security 4732, SID -546)';
+     Run={ Start-Child 'net.exe' @('user','tmHIDS_Guest','TestP@ss123!','/add','/comment:tmHIDS-grp')
+           Start-Child 'net.exe' @('localgroup','Guests','tmHIDS_Guest','/add') };
+     Cleanup={ Start-Child 'net.exe' @('localgroup','Guests','tmHIDS_Guest','/delete')
+               Start-Child 'net.exe' @('user','tmHIDS_Guest','/delete') } }
+
+  # NOTE: group names with a space must be passed as ONE quoted string. Passing
+  # them as separate ArgumentList elements makes net.exe read "Backup" and
+  # "Operators" as two args and the add silently fails (no 4732, no alert).
+  @{ Num=18; Admin=$true;  Native=$true; Tactic='Account Manipulation'; Rule='60176';
+     Name='Backup Operators group change (Security 4732, SID -551)';
+     Run={ Start-Child 'net.exe' @('user','tmHIDS_Backup','TestP@ss123!','/add','/comment:tmHIDS-grp')
+           Start-Child 'net.exe' @('localgroup "Backup Operators" tmHIDS_Backup /add') };
+     Cleanup={ Start-Child 'net.exe' @('localgroup "Backup Operators" tmHIDS_Backup /delete')
+               Start-Child 'net.exe' @('user','tmHIDS_Backup','/delete') } }
+
+  @{ Num=19; Admin=$true;  Native=$true; Tactic='Account Manipulation'; Rule='60189';
+     Name='Cryptographic Operators group change (Security 4732, SID S-1-5-32-569)';
+     # "Cryptographic Operators" is absent on some Windows Home editions; the add
+     # then fails and nothing fires -- expected on those SKUs.
+     Run={ Start-Child 'net.exe' @('user','tmHIDS_Crypto','TestP@ss123!','/add','/comment:tmHIDS-grp')
+           Start-Child 'net.exe' @('localgroup "Cryptographic Operators" tmHIDS_Crypto /add') };
+     Cleanup={ Start-Child 'net.exe' @('localgroup "Cryptographic Operators" tmHIDS_Crypto /delete')
+               Start-Child 'net.exe' @('user','tmHIDS_Crypto','/delete') } }
 )
 
 # ---------------------------------------------------------------------------
@@ -206,12 +281,14 @@ function Invoke-HidsBatch {
 
 function Show-Usage {
   Write-Host ''
-  Write-Host '  tmHids -- trigger endpoint detections on a Wazuh + Sysmon host'
+  Write-Host '  tmHids -- trigger endpoint detections on a Wazuh host'
+  Write-Host '  tests 1-12 need Sysmon; [native] tests fire from built-in logs (no Sysmon)'
   Write-Host ("  elevation: {0}" -f $(if ($IsAdmin) { 'admin (all tests available)' } else { 'standard (admin tests will be skipped)' }))
   Write-Host ''
   foreach ($t in $Tests) {
-    Write-Host ("    -{0,-2}  {1,-20} {2,-48} -> {3}{4}" -f `
-      $t.Num, $t.Tactic, $t.Name, "rule $($t.Rule)", $(if ($t.Admin) { '  [admin]' } else { '' }))
+    Write-Host ("    -{0,-2}  {1,-20} {2,-52} -> {3}{4}{5}" -f `
+      $t.Num, $t.Tactic, $t.Name, "rule $($t.Rule)", `
+      $(if ($t.Admin) { '  [admin]' } else { '' }), $(if ($t.Native) { '  [native]' } else { '' }))
   }
   Write-Host '    -99  run all of them'
   Write-Host ''
@@ -234,7 +311,7 @@ while ($true) {
   Write-Host ("  tmHids -- {0}" -f $(if ($IsAdmin) { 'elevated' } else { 'standard (admin tests skipped)' }))
   Write-Host ''
   foreach ($t in $Tests) {
-    Write-Host ("    {0,2})  {1,-20} {2}{3}" -f $t.Num, $t.Tactic, $t.Name, $(if ($t.Admin) { '  [admin]' } else { '' }))
+    Write-Host ("    {0,2})  {1,-20} {2}{3}{4}" -f $t.Num, $t.Tactic, $t.Name, $(if ($t.Admin) { '  [admin]' } else { '' }), $(if ($t.Native) { '  [native]' } else { '' }))
   }
   Write-Host '     A)  RUN ALL'
   Write-Host '     Q)  Quit'

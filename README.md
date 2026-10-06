@@ -170,6 +170,51 @@ not test defects:
   `0860-sysmon_id_13.xml`). The test already writes the real-world InprocServer32
   variant, so it will light up once the rule is broadened.
 
+### Native tests (no Sysmon)
+
+Tests 1-12 key on Sysmon events. On a Wazuh agent **without Sysmon** they mostly
+go dark. Tests 13-16 fire from built-in Windows logs, so they work on those
+agents too. In the menu / `-l` they carry a `[native]` tag.
+
+| # | Tactic | Test | Rule(s) | Channel | Admin | Fires on default agent? |
+|---|--------|------|---------|---------|:-----:|:-----------------------:|
+| 13 | Account Manipulation | Local admin account create + delete | 60154 (L12), 60109/60111 (L8) | Security (4720/4726/4732) | ✓ | ✓ |
+| 16 | Credential Access | Brute force - multiple failed logons | 60204 (L10) | Security (4625) | | ✓ |
+| 17 | Account Manipulation | Guests group change | 60171 (L12) | Security (4732, SID -546) | ✓ | ✓ |
+| 18 | Account Manipulation | Backup Operators group change | 60176 (L12) | Security (4732, SID -551) | ✓ | ✓ |
+| 19 | Account Manipulation | Cryptographic Operators group change | 60189 (L12) | Security (4732, SID S-1-5-32-569) | ✓ | ✓ |
+| 14 | Defense Evasion | EICAR → Defender detection | 62123 (L12) | Defender/Operational (1116) | | needs channel |
+| 15 | Execution | PowerShell Invoke-Command | 91823 (L14) | PowerShell/Operational (4104) | | needs channel + SBL |
+
+All of 13, 16, 17, 18, 19 are validated firing on a stock agent (Security channel
+only). 17-19 are the local sensitive-group changes — same mechanism as 13, each
+L12. (Domain-group equivalents like Domain Admins need an AD environment and are
+out of scope.)
+
+**Validated end-to-end** against the live manager on 2026-10-06, on two agents:
+one with the Defender+PowerShell channels (all four fired) and one **stock agent**
+(collects only Application/Security/System).
+
+What fires on a **stock/default Wazuh agent** (Security channel, default audit):
+- **13 ✓** — the Administrators add is event 4732 → **60154 (L12)**; create/delete
+  give 60109/60111 (L8). Confirmed firing.
+- **16 ✓** — 15 bad network logons to loopback → 4625 aggregated by **60204 (L10)**.
+  Non-existent username, so nothing locks out. Confirmed firing.
+
+What needs extra log collection (add the channel to the agent's `ossec.conf`):
+- **14** — Defender *does* detect the EICAR drop locally (events 1116/1117), but a
+  stock agent doesn't forward `Microsoft-Windows-Windows Defender/Operational`.
+  Add that `<localfile>` and it fires.
+- **15** — needs both `Microsoft-Windows-PowerShell/Operational` collected **and**
+  PowerShell Script Block Logging enabled. With both (the IntelliBroń installer
+  sets them) 91823 fires; on a stock agent it stays dark.
+
+```xml
+<!-- add to ossec.conf to enable tests 14 and 15 on a stock agent -->
+<localfile><location>Microsoft-Windows-Windows Defender/Operational</location><log_format>eventchannel</log_format></localfile>
+<localfile><location>Microsoft-Windows-PowerShell/Operational</location><log_format>eventchannel</log_format></localfile>
+```
+
 ## Safety notes
 
 - No malware. Renamed system binaries only `echo`; "downloads" are dummy stubs;
