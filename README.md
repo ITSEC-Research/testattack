@@ -39,7 +39,11 @@ malware, no payloads, no persistence left behind.
 **NIDS — Linux**
 
 ```bash
+# run all
 curl -sSL https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOrion.sh -o /tmp/tmOrion.sh && bash /tmp/tmOrion.sh -99
+
+# interactive menu
+curl -sSL https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOrion.sh -o /tmp/tmOrion.sh && bash /tmp/tmOrion.sh
 ```
 
 **NIDS — Windows (PowerShell)**
