@@ -45,16 +45,24 @@ curl -sSL https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOri
 **NIDS — Windows (PowerShell)**
 
 ```powershell
+# run all
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOrion.ps1 -OutFile $env:TEMP\tmOrion.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\tmOrion.ps1 -99
+
+# interactive menu
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmOrion.ps1 -OutFile $env:TEMP\tmOrion.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\tmOrion.ps1
 ```
 
 **HIDS — Windows (elevated PowerShell)**
 
 ```powershell
+# run all
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmHids.ps1 -OutFile $env:TEMP\tmHids.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\tmHids.ps1 -99
+
+# interactive menu
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://raw.githubusercontent.com/ITSEC-Research/testattack/main/tmHids.ps1 -OutFile $env:TEMP\tmHids.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\tmHids.ps1
 ```
 
-Drop `-99` for the menu. The `-bor 3072` prefix forces TLS 1.2 for older
+The `-bor 3072` prefix forces TLS 1.2 for older
 Windows builds; harmless on current ones.
 
 ## Usage
