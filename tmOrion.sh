@@ -19,9 +19,19 @@
 #   LAN_TARGET  a host on your own network, used by the scan and lateral
 #               movement tests. No default: those two tests generate traffic
 #               you need to be authorised to send, so you have to name it.
+#   LAN_URL     an HTTP server on your own network, used by the CVE exploit-
+#               attempt tests (9, 10). Any server will do, even a throwaway
+#               `python3 -m http.server 8080`; the signatures match the
+#               request. No default, for the same reason as LAN_TARGET: an
+#               exploit-shaped request should only go to a host you own.
+#
+# Tests 7-10 fire rules that carry CVE metadata (ET `metadata: cve CVE_...`),
+# for checking that CVE tagging survives your pipeline end to end (ECS-style
+# pipelines usually map it to vulnerability.id).
 #
 TARGET="${TMORION_TARGET:-example.com}"
 LAN_TARGET="${TMORION_LAN_TARGET:-}"
+LAN_URL="${TMORION_LAN_URL%/}"
 
 test1_name="Malware C2 check-in            -> sid 2029231  ET MALWARE Zeoticus Ransomware CnC"
 test2_name="Malicious domain DNS lookup    -> sid 2029346  ET MALWARE Possible Winnti DNS Lookup"
@@ -29,6 +39,10 @@ test3_name="Phishing credential submission -> sid 2017753  ET PHISHING Successfu
 test4_name="Port scan / host discovery     -> sid 2003068  ET SCAN Potential SSH Scan OUTBOUND"
 test5_name="Lateral movement SSH + RDP     -> sid 2038967  ET INFO SSH-2.0-Go version string"
 test6_name="Command output in HTTP reply   -> sid 2100498  GPL ATTACK_RESPONSE id check returned root"
+test7_name="CVE-2021-44228 Log4Shell DNS   -> sid 2034820  ET ATTACK_RESPONSE DNS Query for CVE-2021-44228 Scanner Domain"
+test8_name="CVE-2017-0144 WannaCry DNS     -> sid 2024291  ET MALWARE Possible WannaCry DNS Lookup 1"
+test9_name="CVE-2021-44228 Log4j JNDI HTTP -> sid 2034647  ET EXPLOIT Apache log4j RCE Attempt (http ldap)"
+test10_name="CVE-2020-5902 F5 TMUI HTTP     -> sid 2030469  ET EXPLOIT F5 TMUI RCE CVE-2020-5902 Attempt M1"
 
 # ---------------------------------------------------------------------------
 
@@ -36,6 +50,14 @@ need_lan_target() {
   [ -n "$LAN_TARGET" ] && return 0
   echo "  SKIPPED. This test sends traffic to a host on your own network."
   echo "  Name it first:  export TMORION_LAN_TARGET=10.0.0.5"
+  return 1
+}
+
+need_lan_url() {
+  [ -n "$LAN_URL" ] && return 0
+  echo "  SKIPPED. This test sends an exploit-shaped request to an HTTP server on"
+  echo "  your own network. Name one first:  export TMORION_LAN_URL=http://10.0.0.5:8080"
+  echo "  (a throwaway 'python3 -m http.server 8080' on that host is enough)"
   return 1
 }
 
@@ -118,6 +140,46 @@ test6() {
     "http://${TARGET}/" > /dev/null 2>&1
 }
 
+# A lookup for a Log4Shell *scanner* domain (Huntress's public log4shell
+# tester). DNS query only, like test 2: nothing connects anywhere. The rule
+# matches any name ending in .log4shell.huntress.com, so the label is free.
+test7() {
+  dig +short +timeout=3 +tries=1 "@$(dns_server)" \
+    tmorion-test.log4shell.huntress.com > /dev/null 2>&1
+}
+
+# A lookup for the WannaCry kill-switch domain. DNS query only. The domain has
+# been a researchers' sinkhole since 2017, so it resolves, but nothing here
+# connects to it. The rule allows at most 5 bytes after the label, so the name
+# must be exactly this plus ".com".
+test8() {
+  dig +short +timeout=3 +tries=1 "@$(dns_server)" \
+    iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com > /dev/null 2>&1
+}
+
+# A Log4j JNDI lookup string in a request header -- the classic Log4Shell probe.
+# The rule is scoped `any -> $HOME_NET`, so it only fires against a server on
+# your own network, which is why this goes to LAN_URL and not TARGET. Inert:
+# the lookup points at 127.0.0.1 on the *receiving* host and nothing evaluates
+# it unless that host runs a vulnerable Log4j. Needs a real HTTP server there
+# (the rule wants an established flow), but any server works.
+test9() {
+  need_lan_url || return 0
+  curl -s -m 10 -o /dev/null \
+    -H 'X-Api-Version: ${jndi:ldap://127.0.0.1:1389/a}' \
+    "${LAN_URL}/" > /dev/null 2>&1
+}
+
+# An F5 BIG-IP TMUI path-traversal URI (CVE-2020-5902): /tmui/login.jsp followed
+# by a ';'. The rule matches the URI alone, so a 404 from a non-F5 server is
+# fine. --path-as-is stops curl from normalising the "..;" segment away.
+test10() {
+  need_lan_url || return 0
+  curl -s -m 10 -o /dev/null --path-as-is \
+    "${LAN_URL}/tmui/login.jsp/..;/tmui/system/user/authproperties.jsp" \
+    > /dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 
 run() {
@@ -139,12 +201,19 @@ usage() {
   echo "    -4   $test4_name"
   echo "    -5   $test5_name"
   echo "    -6   $test6_name"
+  echo "    -7   $test7_name"
+  echo "    -8   $test8_name"
+  echo "    -9   $test9_name"
+  echo "    -10  $test10_name"
   echo "    -99  run all of them"
   echo
-  echo "  TMORION_TARGET      external HTTP host    (now: $TARGET)"
-  echo "  TMORION_LAN_TARGET  host on your network  (now: ${LAN_TARGET:-not set})"
+  echo "  TMORION_TARGET      external HTTP host           (now: $TARGET)"
+  echo "  TMORION_LAN_TARGET  host on your network         (now: ${LAN_TARGET:-not set})"
+  echo "  TMORION_LAN_URL     HTTP server on your network  (now: ${LAN_URL:-not set})"
   echo
 }
+
+ALL_TESTS="1 2 3 4 5 6 7 8 9 10"
 
 for dep in curl dig nc; do
   command -v "$dep" > /dev/null 2>&1 || echo "  warning: '$dep' not found, some tests will not run"
@@ -153,8 +222,8 @@ done
 if [ $# -gt 0 ]; then
   for arg in "$@"; do
     case "$arg" in
-      -1|-2|-3|-4|-5|-6) run "${arg#-}" ;;
-      -99) for n in 1 2 3 4 5 6; do run "$n"; done ;;
+      -1|-2|-3|-4|-5|-6|-7|-8|-9|-10) run "${arg#-}" ;;
+      -99) for n in $ALL_TESTS; do run "$n"; done ;;
       -l|--list|-h|--help) usage ;;
       *) echo "  unknown argument: $arg"; usage; exit 1 ;;
     esac
@@ -165,17 +234,18 @@ fi
 
 while true; do
   echo
-  echo "  tmOrion -- target: ${TARGET}   lan: ${LAN_TARGET:-not set}"
+  echo "  tmOrion -- target: ${TARGET}   lan: ${LAN_TARGET:-not set}   lan url: ${LAN_URL:-not set}"
   echo
   PS3="
   Choose which test you'd like to run: "
   options=("$test1_name" "$test2_name" "$test3_name" "$test4_name"
-           "$test5_name" "$test6_name" "CHAOS! RUN ALL!" "Quit!")
+           "$test5_name" "$test6_name" "$test7_name" "$test8_name"
+           "$test9_name" "$test10_name" "CHAOS! RUN ALL!" "Quit!")
   select _opt in "${options[@]}"; do
     case $REPLY in
-      1|2|3|4|5|6) run "$REPLY"; break ;;
-      7) for n in 1 2 3 4 5 6; do run "$n"; done; break ;;
-      8) echo; exit 0 ;;
+      1|2|3|4|5|6|7|8|9|10) run "$REPLY"; break ;;
+      11) for n in $ALL_TESTS; do run "$n"; done; break ;;
+      12) echo; exit 0 ;;
       *) echo "  pick a number from the list"; break ;;
     esac
   done
