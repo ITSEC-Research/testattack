@@ -15,7 +15,8 @@ malware, no payloads, no persistence left behind.
 | **HIDS** | Endpoint agent (Wazuh + Sysmon) | `tmHids.ps1` (Windows) |
 
 - **NIDS** tests run from any host *inside* the monitored network — Linux or
-  Windows, whichever you have handy. Both scripts fire identical traffic.
+  Windows, whichever you have handy. Both scripts fire identical traffic for
+  tests 1-6; the CVE tests (7-10) are in `tmOrion.sh` only for now.
 - **HIDS** tests run *on* the Windows endpoint you want to validate.
 - The full 90-test endpoint suite with a web UI lives separately in
   [`../testmyedr`](../testmyedr); `tmHids.ps1` is a grab-and-go subset of it.
@@ -91,6 +92,7 @@ powershell.exe -ExecutionPolicy Bypass -File tmOrion.ps1 -l     # list
 ```bash
 export TMORION_TARGET=example.com
 export TMORION_LAN_TARGET=10.0.0.5
+export TMORION_LAN_URL=http://10.0.0.5:8080   # HTTP server on YOUR network (CVE tests 9, 10)
 ./tmOrion.sh            # menu
 ./tmOrion.sh -2         # run test 2
 ./tmOrion.sh -99        # run all
@@ -125,6 +127,25 @@ skipped otherwise.
 | 4 | Port scan / host discovery `LAN` | outbound SYNs + 300-port sweep | sid 2003068 — ET SCAN Potential SSH Scan OUTBOUND (+ Zeek scan) |
 | 5 | Lateral movement SSH + RDP `LAN` | SSH banner + RDP mstshash cookie | sid 2038967 — ET INFO SSH-2.0-Go (+ Zeek ssh.log / rdp.log) |
 | 6 | Command output in HTTP reply | HTTP body with `uid=0(root)` | sid 2100498 — GPL ATTACK_RESPONSE id check returned root |
+
+### CVE tests (`tmOrion.sh`)
+
+Each fires a rule that carries CVE metadata (`metadata: cve CVE_...`), to check
+that CVE tagging survives your pipeline end to end. ECS-style pipelines usually
+map it to `vulnerability.id`, in the ET form `CVE_2021_44228` (underscores).
+`URL` tests need `TMORION_LAN_URL`, an HTTP server on your own network: any
+server works, even a throwaway `python3 -m http.server 8080`. They're skipped
+otherwise, because an exploit-shaped request should only go to a host you own.
+
+| # | CVE | Test | Fires | Signature |
+|---|-----|------|-------|-----------|
+| 7 | CVE-2021-44228 | Log4Shell scanner-domain DNS lookup | DNS query only | sid 2034820 — ET ATTACK_RESPONSE DNS Query for Observed CVE-2021-44228 Security Scanner Domain |
+| 8 | CVE-2017-0144 | WannaCry kill-switch DNS lookup | DNS query only (sinkholed domain) | sid 2024291 — ET MALWARE Possible WannaCry DNS Lookup 1 |
+| 9 | CVE-2021-44228 | Log4j JNDI string in a request header `URL` | HTTP GET to LAN server, inert `${jndi:ldap://127.0.0.1…}` | sid 2034647 — ET EXPLOIT Apache log4j RCE Attempt (http ldap) |
+| 10 | CVE-2020-5902 | F5 BIG-IP TMUI traversal URI `URL` | HTTP GET to LAN server, 404 is fine | sid 2030469 — ET EXPLOIT F5 TMUI RCE vulnerability CVE-2020-5902 Attempt M1 |
+
+Test 9's rule is scoped `any -> $HOME_NET`, which is another reason it targets a
+LAN server: aimed at an external host it would never fire.
 
 ## Included tests — HIDS
 
@@ -229,6 +250,9 @@ What needs extra log collection (add the channel to the agent's `ossec.conf`):
   `taskkill` by image name that could hit legitimate processes.
 - NIDS scan / lateral tests send traffic to a host *you* name and must be
   authorised to probe; they are skipped until you set `TMORION_LAN_TARGET`.
+- NIDS CVE exploit-attempt tests (9, 10) send inert, exploit-shaped requests
+  only to an HTTP server *you* name (`TMORION_LAN_URL`); the DNS CVE tests (7, 8)
+  are lookups only and never connect to the domain.
 
 ## Caveats
 
